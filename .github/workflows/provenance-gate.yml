@@ -1,0 +1,40 @@
+name: provenance-gate
+# Provenance gate — the common "verified commit" pattern implemented by real
+# consumers (cf. 1Password/check-signed-commits-action, which runs
+#   jq '.[] | select(.commit.verification.verified == false)').
+# The predicate is exactly commit.verification.verified == true. It is
+# deliberately signer-agnostic: any signature GitHub verifies satisfies it.
+
+on:
+  push:
+    branches: [demo/gate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-candidate-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert every candidate ref has a verified-signature provenance record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          fail=0
+          while read -r ref; do
+            [ -z "$ref" ] && continue
+            case "$ref" in \#*) continue;; esac
+            sha=$(gh api "repos/$REPO/commits/$ref" --jq '.sha')
+            verified=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.verification.verified')
+            reason=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.verification.reason')
+            echo "ref=$ref sha=$sha verified=$verified reason=$reason"
+            if [ "$verified" != "true" ]; then
+              echo "::error title=unverified commit::$ref $sha is not verified (reason=$reason)"
+              fail=1
+            fi
+          done < candidates.txt
+          exit $fail
